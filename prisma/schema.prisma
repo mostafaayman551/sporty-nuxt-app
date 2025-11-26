@@ -1,0 +1,70 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id                String   @id @default(uuid())
+  email             String   @unique
+  password          String?  // Hashed password (nullable for OAuth users)
+  name              String?
+  role              String   @default("Business Leader")
+  company           String?
+  avatarUrl         String?
+  emailVerified     Boolean  @default(false)
+  emailVerifyToken  String?
+  emailVerifyExpiry DateTime?
+  resetToken        String?
+  resetTokenExpiry  DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  workouts        Workout[]
+  scheduleEvents  ScheduleEvent[]
+  activityMetrics ActivityMetric[]
+}
+
+model Workout {
+  id        String   @id @default(uuid())
+  title     String
+  type      String? // 'run', 'hiit', 'cycling', etc.
+  duration  Int // minutes
+  calories  Int
+  bpm       Int?
+  date      DateTime @default(now())
+  notes     String?
+  createdAt DateTime @default(now())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model ScheduleEvent {
+  id          String    @id @default(uuid())
+  title       String
+  description String?
+  startTime   DateTime
+  endTime     DateTime?
+  location    String?
+  createdAt   DateTime  @default(now())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model ActivityMetric {
+  id            String   @id @default(uuid())
+  date          DateTime @db.Date
+  steps         Int      @default(0)
+  calories      Int      @default(0)
+  activeMinutes Int      @default(0)
+  createdAt     DateTime @default(now())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, date])
+}
