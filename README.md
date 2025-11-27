@@ -48,3 +48,6 @@ A modern full-stack fitness and activity tracking application built with Nuxt.js
 ### Development Tools
 - **ESLint 9.39.1** - Code linting
 - **@nuxt/eslint** - Nuxt ESLint integration
+===============================================
+## Still under development...
+
