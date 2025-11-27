@@ -1,9 +1,16 @@
-import { prisma } from '../../../utils/prisma'
-import { generateToken } from '../../../utils/auth'
+import { findOrCreateOAuthUser, setAuthCookie, getOAuthRedirectUrl } from '../../../controllers/oauth.controller'
 
 export default defineEventHandler(async (event) => {
   const query = getQuery(event)
-  const { code, state } = query
+  const { code, state, error } = query
+
+  // Handle OAuth errors from GitHub
+  if (error) {
+    throw createError({
+      statusCode: 400,
+      statusMessage: `OAuth error: ${error}`
+    })
+  }
 
   if (!code) {
     throw createError({
@@ -14,6 +21,7 @@ export default defineEventHandler(async (event) => {
 
   try {
     const config = useRuntimeConfig()
+    const redirectUri = `${config.public.baseUrl || 'http://localhost:3000'}/api/auth/oauth/github`
     
     // Exchange code for access token with GitHub
     const tokenResponse = await $fetch('https://github.com/login/oauth/access_token', {
@@ -25,27 +33,28 @@ export default defineEventHandler(async (event) => {
         code,
         client_id: config.public.githubClientId,
         client_secret: config.githubClientSecret,
-        redirect_uri: `${config.public.baseUrl || 'http://localhost:3000'}/api/auth/oauth/github`
+        redirect_uri: redirectUri
       }
     })
 
     // Get user info from GitHub
     const userInfo = await $fetch('https://api.github.com/user', {
       headers: {
-        Authorization: `Bearer ${tokenResponse.access_token}`
+        Authorization: `Bearer ${(tokenResponse as any).access_token}`
       }
     })
 
     // Get user email (might need to fetch from emails endpoint)
-    let email = userInfo.email
+    let email = (userInfo as any).email
     if (!email) {
       const emails = await $fetch('https://api.github.com/user/emails', {
         headers: {
-          Authorization: `Bearer ${tokenResponse.access_token}`
+          Authorization: `Bearer ${(tokenResponse as any).access_token}`
         }
       })
-      const primaryEmail = emails.find((e: any) => e.primary)
-      email = primaryEmail?.email || emails[0]?.email
+      const emailList = emails as any[]
+      const primaryEmail = emailList.find((e: any) => e.primary)
+      email = primaryEmail?.email || emailList[0]?.email
     }
 
     if (!email) {
@@ -55,48 +64,20 @@ export default defineEventHandler(async (event) => {
       })
     }
 
-    // Find or create user
-    let user = await prisma.user.findUnique({
-      where: { email }
+    // Find or create user using controller
+    const user = await findOrCreateOAuthUser({
+      email,
+      name: (userInfo as any).name || (userInfo as any).login,
+      avatar_url: (userInfo as any).avatar_url
     })
 
-    if (!user) {
-      // Create new user
-      user = await prisma.user.create({
-        data: {
-          email,
-          name: userInfo.name || userInfo.login,
-          avatarUrl: userInfo.avatar_url,
-          password: '', // OAuth users don't need password
-          role: 'Business Leader'
-        }
-      })
-    } else {
-      // Update user info
-      user = await prisma.user.update({
-        where: { id: user.id },
-        data: {
-          name: userInfo.name || user.name,
-          avatarUrl: userInfo.avatar_url || user.avatarUrl
-        }
-      })
-    }
+    // Set authentication cookie
+    setAuthCookie(event, user.id)
 
-    // Generate token
-    const token = generateToken(user.id)
-
-    // Set cookie
-    setCookie(event, 'auth_token', token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      maxAge: 60 * 60 * 24 * 7, // 7 days
-      path: '/',
-      sameSite: 'lax'
-    })
-
-    // Redirect to home or return URL
-    const redirectUrl = state ? decodeURIComponent(state as string) : '/'
-    return sendRedirect(event, redirectUrl)
+    // Get redirect URL and redirect to home page
+    const redirectUrl = getOAuthRedirectUrl(state as string | undefined)
+    return sendRedirect(event, redirectUrl, 303)
+    
   } catch (error: any) {
     throw createError({
       statusCode: 500,
@@ -104,4 +85,3 @@ export default defineEventHandler(async (event) => {
     })
   }
 })
-

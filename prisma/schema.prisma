@@ -25,6 +25,7 @@ model User {
   workouts        Workout[]
   scheduleEvents  ScheduleEvent[]
   activityMetrics ActivityMetric[]
+  notifications    Notification[]
 }
 
 model Workout {
@@ -67,4 +68,22 @@ model ActivityMetric {
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, date])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  title     String
+  message   String
+  type      String   @default("info") // 'success', 'info', 'warning', 'default'
+  category  String?  // 'Workout', 'Analytics', 'Achievement', 'Schedule', 'Social', etc.
+  read      Boolean  @default(false)
+  link      String?  // Optional link to related page
+  createdAt DateTime @default(now())
+  readAt    DateTime?
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read])
+  @@index([userId, createdAt])
 }

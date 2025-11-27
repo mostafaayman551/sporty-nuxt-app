@@ -24,56 +24,48 @@
     <div class="header-right">
       <div class="header-actions">
         <!-- Notifications Dropdown -->
-        <el-dropdown trigger="click" @command="handleNotificationClick">
+        <el-dropdown trigger="click" @command="handleNotificationClick" @visible-change="fetchNotifications">
           <button
             class="icon-button notification-btn"
             aria-label="Notifications"
           >
             <el-icon><Bell /></el-icon>
-            <span class="notification-badge">3</span>
+            <span v-if="unreadCount > 0" class="notification-badge">{{ unreadCount > 99 ? '99+' : unreadCount }}</span>
           </button>
           <template #dropdown>
             <el-dropdown-menu class="notifications-dropdown">
               <div class="dropdown-header">
                 <h4>Notifications</h4>
-                <button class="mark-read-btn">Mark all as read</button>
+                <button v-if="unreadCount > 0" class="mark-read-btn" @click="markAllAsRead">Mark all as read</button>
               </div>
-              <el-dropdown-item command="notification-1">
-                <div class="notification-item unread">
-                  <div class="notification-icon success">✓</div>
-                  <div class="notification-content">
-                    <div class="notification-title">Workout completed!</div>
-                    <div class="notification-text">
-                      Great job on your morning run
+              <div v-if="loadingNotifications" class="loading-notifications">
+                <el-icon class="is-loading"><Loading /></el-icon>
+                <span>Loading...</span>
                     </div>
-                    <div class="notification-time">5 minutes ago</div>
-                  </div>
-                </div>
-              </el-dropdown-item>
-              <el-dropdown-item command="notification-2">
-                <div class="notification-item unread">
-                  <div class="notification-icon info">📊</div>
-                  <div class="notification-content">
-                    <div class="notification-title">Weekly report ready</div>
-                    <div class="notification-text">
-                      Your analytics summary is available
+              <template v-else-if="notifications.length > 0">
+                <el-dropdown-item 
+                  v-for="notification in notifications" 
+                  :key="notification.id"
+                  :command="`notification-${notification.id}`"
+                >
+                  <div class="notification-item" :class="{ unread: !notification.read }">
+                    <div class="notification-icon" :class="notification.type">
+                      <el-icon v-if="notification.type === 'success'"><Check /></el-icon>
+                      <el-icon v-else-if="notification.type === 'info'"><InfoFilled /></el-icon>
+                      <el-icon v-else-if="notification.type === 'warning'"><Warning /></el-icon>
+                      <el-icon v-else><Bell /></el-icon>
                     </div>
-                    <div class="notification-time">2 hours ago</div>
-                  </div>
-                </div>
-              </el-dropdown-item>
-              <el-dropdown-item command="notification-3">
-                <div class="notification-item">
-                  <div class="notification-icon warning">⚡</div>
                   <div class="notification-content">
-                    <div class="notification-title">Goal achieved!</div>
-                    <div class="notification-text">
-                      You've reached 10,000 steps
+                      <div class="notification-title">{{ notification.title }}</div>
+                      <div class="notification-text">{{ notification.message }}</div>
+                      <div class="notification-time">{{ formatTime(notification.createdAt) }}</div>
                     </div>
-                    <div class="notification-time">Yesterday</div>
                   </div>
+                </el-dropdown-item>
+              </template>
+              <div v-else class="no-notifications">
+                <p>No notifications</p>
                 </div>
-              </el-dropdown-item>
               <div class="dropdown-footer">
                 <NuxtLink to="/notifications" class="view-all-btn">
                   View all notifications
@@ -128,22 +120,30 @@
         <!-- User Profile Dropdown -->
         <el-dropdown trigger="click" @command="handleUserCommand">
           <div class="user-profile">
-            <div class="avatar">
-              <span>JD</span>
+            <div class="avatar" v-if="userAvatar">
+              <img :src="userAvatar" :alt="userName" />
+            </div>
+            <div class="avatar" v-else>
+              <span>{{ userInitials }}</span>
             </div>
             <div class="user-info">
-              <div class="user-name">John Doe</div>
-              <div class="user-role">Business Leader</div>
+              <div class="user-name">{{ userName }}</div>
+              <div class="user-role">{{ userRole }}</div>
             </div>
             <el-icon class="dropdown-arrow"><ArrowDown /></el-icon>
           </div>
           <template #dropdown>
             <el-dropdown-menu class="user-dropdown">
               <div class="dropdown-user-header">
-                <div class="avatar large">JD</div>
+                <div class="avatar large" v-if="userAvatar">
+                  <img :src="userAvatar" :alt="userName" />
+                </div>
+                <div class="avatar large" v-else>
+                  <span>{{ userInitials }}</span>
+                </div>
                 <div class="user-details">
-                  <div class="user-name-large">John Doe</div>
-                  <div class="user-email">john.doe@example.com</div>
+                  <div class="user-name-large">{{ userName }}</div>
+                  <div class="user-email">{{ userEmail }}</div>
                 </div>
               </div>
               <el-dropdown-item command="profile" divided>
@@ -175,7 +175,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, onMounted, onUnmounted } from "vue";
+import { ref, computed, onMounted, onUnmounted } from "vue";
 import {
   Bell,
   Search,
@@ -189,10 +189,105 @@ import {
   Tools,
   Lock,
   Sunny,
+  Check,
+  InfoFilled,
+  Warning,
+  Loading,
 } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
+import { useAuthStore } from "~/stores/auth";
 
+const authStore = useAuthStore();
 const searchInput = ref<HTMLInputElement | null>(null);
+const notifications = ref<any[]>([]);
+const unreadCount = ref(0);
+const loadingNotifications = ref(false);
+
+// User data from store
+const userName = computed(() => authStore.userName);
+const userRole = computed(() => authStore.userRole);
+const userInitials = computed(() => authStore.userInitials);
+const userAvatar = computed(() => authStore.user?.avatarUrl);
+const userEmail = computed(() => authStore.user?.email);
+
+// Fetch notifications
+const fetchNotifications = async () => {
+  try {
+    loadingNotifications.value = true;
+    const { data } = await useFetch('/api/notifications', {
+      query: { limit: 5, read: false },
+      credentials: 'include'
+    });
+    
+    if (data.value) {
+      notifications.value = data.value.notifications || [];
+      unreadCount.value = data.value.unreadCount || 0;
+    }
+  } catch (error) {
+    console.error('Failed to fetch notifications:', error);
+  } finally {
+    loadingNotifications.value = false;
+  }
+};
+
+// Format time
+const formatTime = (date: Date | string) => {
+  const now = new Date();
+  const notificationDate = new Date(date);
+  const diff = now.getTime() - notificationDate.getTime();
+  const minutes = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+
+  if (minutes < 1) return 'Just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  if (days < 7) return `${days}d ago`;
+  return notificationDate.toLocaleDateString();
+};
+
+// Mark notification as read
+const markAsRead = async (id: string) => {
+  try {
+    await useFetch(`/api/notifications/${id}`, {
+      method: 'PUT',
+      body: { read: true },
+      credentials: 'include'
+    });
+    await fetchNotifications();
+  } catch (error) {
+    ElMessage.error('Failed to mark notification as read');
+  }
+};
+
+// Mark all as read
+const markAllAsRead = async () => {
+  try {
+    await useFetch('/api/notifications/read-all', {
+      method: 'PUT',
+      credentials: 'include'
+    });
+    await fetchNotifications();
+    ElMessage.success('All notifications marked as read');
+  } catch (error) {
+    ElMessage.error('Failed to mark all as read');
+  }
+};
+
+// Load notifications on mount
+onMounted(async () => {
+  // Ensure auth store is initialized
+  if (!authStore.initialized) {
+    await authStore.initialize();
+  }
+  
+  if (authStore.isAuthenticated) {
+    fetchNotifications();
+    // Refresh notifications every 30 seconds
+    const interval = setInterval(fetchNotifications, 30000);
+    onUnmounted(() => clearInterval(interval));
+  }
+});
 
 const openSearch = () => {
   searchInput.value?.focus();
@@ -204,8 +299,17 @@ const handleSearchKeydown = (event: KeyboardEvent) => {
   }
 };
 
-const handleNotificationClick = (command: string) => {
-  ElMessage.success(`Opened notification: ${command}`);
+const handleNotificationClick = async (command: string) => {
+  if (command.startsWith('notification-')) {
+    const id = command.replace('notification-', '');
+    const notification = notifications.value.find(n => n.id === id);
+    if (notification && !notification.read) {
+      await markAsRead(notification.id);
+    }
+    if (notification?.link) {
+      navigateTo(notification.link);
+    }
+  }
 };
 
 const handleSettingsCommand = (command: string) => {
@@ -233,27 +337,22 @@ const handleSettingsCommand = (command: string) => {
   }
 };
 
-const handleUserCommand = (command: string) => {
+const handleUserCommand = async (command: string) => {
   switch (command) {
     case "profile":
-      ElMessage.info("Opening profile...");
       navigateTo("/profile");
       break;
     case "settings":
-      ElMessage.info("Opening settings...");
       navigateTo("/settings");
       break;
     case "billing":
-      ElMessage.info("Opening billing...");
       navigateTo("/billing");
       break;
     case "team":
-      ElMessage.info("Opening team...");
       navigateTo("/team");
       break;
     case "logout":
-      ElMessage.warning("Logging out...");
-      navigateTo("/auth/login");
+      await authStore.signOut();
       break;
   }
 };
@@ -463,6 +562,14 @@ onUnmounted(() => {
   justify-content: center;
   font-weight: 700;
   font-size: 0.875rem;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .avatar.large {
@@ -605,6 +712,27 @@ onUnmounted(() => {
 .notification-time {
   font-size: 0.75rem;
   color: #94a3b8;
+}
+
+.loading-notifications {
+  padding: 20px;
+  text-align: center;
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.no-notifications {
+  padding: 40px 20px;
+  text-align: center;
+  color: #94a3b8;
+}
+
+.no-notifications p {
+  margin: 0;
+  font-size: 0.875rem;
 }
 
 .dropdown-footer {

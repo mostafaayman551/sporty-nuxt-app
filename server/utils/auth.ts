@@ -1,9 +1,26 @@
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
+import crypto from 'crypto'
 import { prisma } from './prisma'
 
 const SALT_ROUNDS = 10
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production'
+const JWT_PRIVATE_KEY = process.env.JWT_PRIVATE_KEY || ''
+
+// Extract public key from private key for verification
+const getPublicKey = (privateKey: string): string => {
+  try {
+    const keyObject = crypto.createPrivateKey(privateKey)
+    return crypto.createPublicKey(keyObject).export({ type: 'spki', format: 'pem' }) as string
+  } catch (error) {
+    throw new Error('Invalid JWT_PRIVATE_KEY format')
+  }
+}
+
+const JWT_PUBLIC_KEY = JWT_PRIVATE_KEY ? getPublicKey(JWT_PRIVATE_KEY) : ''
+
+if (!JWT_PRIVATE_KEY) {
+  console.warn('⚠️  JWT_PRIVATE_KEY is not set. JWT authentication will not work properly.')
+}
 
 export const hashPassword = async (password: string) => {
   return await bcrypt.hash(password, SALT_ROUNDS)
@@ -14,12 +31,25 @@ export const comparePassword = async (password: string, hash: string) => {
 }
 
 export const generateToken = (userId: string) => {
-  return jwt.sign({ userId }, JWT_SECRET, { expiresIn: '7d' })
+  if (!JWT_PRIVATE_KEY) {
+    throw new Error('JWT_PRIVATE_KEY is not configured')
+  }
+  return jwt.sign({ userId }, JWT_PRIVATE_KEY, { 
+    algorithm: 'RS256',
+    expiresIn: '7d' 
+  })
 }
 
 export const verifyToken = (token: string) => {
   try {
-    return jwt.verify(token, JWT_SECRET) as { userId: string }
+    if (!JWT_PUBLIC_KEY) {
+      return null
+    }
+    const decoded = jwt.verify(token, JWT_PUBLIC_KEY, { algorithms: ['RS256'] })
+    if (typeof decoded === 'object' && decoded !== null && 'userId' in decoded) {
+      return decoded as { userId: string }
+    }
+    return null
   } catch (error) {
     return null
   }
@@ -39,10 +69,6 @@ export const getUserFromEvent = async (event: any) => {
 }
 
 export const generateRandomToken = (length: number = 32): string => {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
-  let token = ''
-  for (let i = 0; i < length; i++) {
-    token += chars.charAt(Math.floor(Math.random() * chars.length))
-  }
-  return token
+  // Use crypto.randomBytes (same as jsonwebtoken uses internally) for secure token generation
+  return crypto.randomBytes(length).toString('hex')
 }

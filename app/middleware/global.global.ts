@@ -1,4 +1,9 @@
 export default defineNuxtRouteMiddleware(async (to) => {
+  // Skip middleware for API routes (they handle their own auth)
+  if (to.path.startsWith('/api/')) {
+    return
+  }
+  
   const authStore = useAuthStore()
   
   // Define public routes that don't require authentication
@@ -14,8 +19,18 @@ export default defineNuxtRouteMiddleware(async (to) => {
   const isPublicRoute = publicRoutes.includes(to.path)
   
   // Initialize auth if not done yet
-  if (!authStore.initialized) {
-    await authStore.initialize()
+  // Force re-initialization if coming from OAuth callback (check query params)
+  const isOAuthCallback = to.query.oauth === 'success' || to.query.code || to.query.state
+  
+  if (!authStore.initialized || isOAuthCallback) {
+    await authStore.initialize(isOAuthCallback)
+    
+    // If OAuth callback, clean up the query parameter after initialization
+    if (isOAuthCallback && to.query.oauth === 'success') {
+      // Remove oauth query parameter and redirect to clean URL
+      const cleanPath = to.path
+      return navigateTo(cleanPath, { replace: true })
+    }
   }
   
   // If user is not authenticated and trying to access a protected route

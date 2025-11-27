@@ -30,8 +30,8 @@ export const useAuthStore = defineStore('auth', {
   },
 
   actions: {
-    async initialize() {
-      if (this.initialized) return
+    async initialize(force = false) {
+      if (this.initialized && !force) return
       
       try {
         const { data, error } = await useFetch('/api/auth/me', {
@@ -89,15 +89,12 @@ export const useAuthStore = defineStore('auth', {
           }
           
           // Token is already set in cookie by server
-          // Only set client-side cookie if we're in browser
-          if (import.meta.client && data.value.token) {
-            const tokenCookie = useCookie('auth_token', {
-              maxAge: 60 * 60 * 24 * 7, // 7 days
-              secure: process.env.NODE_ENV === 'production',
-              sameSite: 'lax',
-              httpOnly: false
-            })
-            tokenCookie.value = data.value.token
+          // Re-initialize to ensure state is fresh
+          await this.initialize(true)
+          
+          // Navigate to home page after successful login
+          if (import.meta.client) {
+            await navigateTo('/')
           }
           
           return { error: null }
